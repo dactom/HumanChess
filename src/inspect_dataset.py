@@ -2,7 +2,7 @@ import chess.pgn
 from pathlib import Path
 from collections import Counter
 
-path = Path("data/filtered/rapid_750_850_test.pgn")
+path = Path("data/filtered/rapid_800_900_test.pgn")
 
 games = 0
 white_elos = []
