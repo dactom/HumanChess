@@ -89,7 +89,7 @@ def set_position(board, command):
 
 
 def main():
-    model = load_model()
+    model = None
     board = chess.Board()
 
     while True:
@@ -107,6 +107,12 @@ def main():
             sys.stdout.flush()
 
         elif command == "isready":
+
+            # Load the neural network only after
+            # the UCI handshake has started.
+            if model is None:
+                model = load_model()
+
             print("readyok")
             sys.stdout.flush()
 
@@ -117,17 +123,29 @@ def main():
             set_position(board, command)
 
         elif command.startswith("go"):
+
+            # Safety in case a GUI sends "go"
+            # before "isready".
+            if model is None:
+                model = load_model()
+
             if board.is_game_over():
                 print("bestmove 0000")
+
             else:
                 move = choose_move(model, board)
+
+                print(
+                    f"info depth 1 multipv 1 "
+                    f"pv {move.uci()}"
+                )
+
                 print(f"bestmove {move.uci()}")
 
             sys.stdout.flush()
 
         elif command == "quit":
             break
-
 
 if __name__ == "__main__":
     main()
