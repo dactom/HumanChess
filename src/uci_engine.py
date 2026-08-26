@@ -5,7 +5,7 @@ import torch
 
 from src.model import HumanChessPolicy
 from src.board_encoding import encode_board
-from src.move_encoding import move_to_index
+from src.move_encoding import move_to_index 
 
 
 CHECKPOINT_PATH = "checkpoints/human_chess_policy.pt"
@@ -28,6 +28,40 @@ def load_model():
 
     return model
 
+def allows_major_piece_capture(board, move):
+    """
+    Return True if, after playing `move`, the opponent can
+    immediately capture our queen or rook.
+    """
+
+    test_board = board.copy()
+    our_colour = board.turn
+
+    test_board.push(move)
+
+    for reply in test_board.legal_moves:
+
+        if not test_board.is_capture(reply):
+            continue
+
+        captured_piece = test_board.piece_at(
+            reply.to_square
+        )
+
+        if captured_piece is None:
+            continue
+
+        if captured_piece.color != our_colour:
+            continue
+
+        if captured_piece.piece_type in (
+            chess.QUEEN,
+            chess.ROOK,
+        ):
+            return True
+
+    return False
+
 
 def choose_move(model, board):
     position = encode_board(board)
@@ -38,8 +72,7 @@ def choose_move(model, board):
 
     scores = output[0]
 
-    best_move = None
-    best_score = float("-inf")
+    candidate_moves = []
 
     for move in board.legal_moves:
         move_index = move_to_index(
@@ -49,11 +82,31 @@ def choose_move(model, board):
 
         score = scores[move_index].item()
 
-        if score > best_score:
-            best_score = score
-            best_move = move
+        candidate_moves.append(
+            (score, move)
+        )
 
-    return best_move
+    # Highest neural-network score first
+    candidate_moves.sort(
+        key=lambda item: item[0],
+        reverse=True,
+    )
+
+    # Try moves in the model's preferred order.
+    # Reject moves that immediately expose
+    # our queen or rook to capture.
+    for score, move in candidate_moves:
+
+        if not allows_major_piece_capture(
+            board,
+            move,
+        ):
+            return move
+
+    # If every legal move fails the safety test,
+    # fall back to the model's favourite move.
+    return candidate_moves[0][1]
+
 
 
 def set_position(board, command):
