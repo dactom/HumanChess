@@ -1,3 +1,4 @@
+import argparse
 import csv
 from pathlib import Path
 
@@ -5,18 +6,48 @@ import chess
 import chess.pgn
 
 
-INPUT_PGN = Path("data/filtered/rapid_800_900_test.pgn")
-OUTPUT_CSV = Path("data/processed/rapid_800_900_positions_test.csv")
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Extract training positions from a PGN file."
+    )
+
+    parser.add_argument(
+        "input_pgn",
+        type=Path,
+        help="Input PGN file",
+    )
+
+    parser.add_argument(
+        "output_csv",
+        type=Path,
+        help="Output CSV file",
+    )
+
+    return parser.parse_args()
 
 
 def main():
-    OUTPUT_CSV.parent.mkdir(parents=True, exist_ok=True)
+    args = parse_args()
+
+    input_pgn = args.input_pgn
+    output_csv = args.output_csv
+
+    output_csv.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
 
     games = 0
     positions = 0
 
-    with INPUT_PGN.open("r", encoding="utf-8") as pgn_file, \
-         OUTPUT_CSV.open("w", newline="", encoding="utf-8") as csv_file:
+    with input_pgn.open(
+        "r",
+        encoding="utf-8",
+    ) as pgn_file, output_csv.open(
+        "w",
+        newline="",
+        encoding="utf-8",
+    ) as csv_file:
 
         writer = csv.DictWriter(
             csv_file,
@@ -30,10 +61,13 @@ def main():
                 "result",
             ],
         )
+
         writer.writeheader()
 
         while True:
-            game = chess.pgn.read_game(pgn_file)
+            game = chess.pgn.read_game(
+                pgn_file
+            )
 
             if game is None:
                 break
@@ -42,13 +76,25 @@ def main():
 
             headers = game.headers
 
-            white_elo = int(headers["WhiteElo"])
-            black_elo = int(headers["BlackElo"])
-            result = headers.get("Result", "*")
+            white_elo = int(
+                headers["WhiteElo"]
+            )
+
+            black_elo = int(
+                headers["BlackElo"]
+            )
+
+            result = headers.get(
+                "Result",
+                "*",
+            )
 
             board = game.board()
 
-            for ply, move in enumerate(game.mainline_moves(), start=1):
+            for ply, move in enumerate(
+                game.mainline_moves(),
+                start=1,
+            ):
                 if board.turn == chess.WHITE:
                     player_elo = white_elo
                     opponent_elo = black_elo
@@ -71,9 +117,17 @@ def main():
                 positions += 1
                 board.push(move)
 
-    print(f"Processed {games:,} games")
-    print(f"Extracted {positions:,} positions")
-    print(f"Saved to {OUTPUT_CSV}")
+    print(
+        f"Processed {games:,} games"
+    )
+
+    print(
+        f"Extracted {positions:,} positions"
+    )
+
+    print(
+        f"Saved to {output_csv}"
+    )
 
 
 if __name__ == "__main__":

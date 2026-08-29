@@ -11,8 +11,12 @@ from src.model import HumanChessPolicy
 from src.move_encoding import move_to_index
 
 
+# --------------------------------------------------
+# Training configuration
+# --------------------------------------------------
+
 DATASET_PATH = (
-    "data/processed/rapid_800_900_positions_test.csv"
+    "data/processed/rapid_800_900_positions_5000.csv"
 )
 
 BATCH_SIZE = 64
@@ -20,14 +24,26 @@ LEARNING_RATE = 0.001
 EPOCHS = 15
 
 CHECKPOINT_DIR = Path("checkpoints")
-CHECKPOINT_PATH = CHECKPOINT_DIR / "human_chess_policy.pt"
 
+CHECKPOINT_PATH = (
+    CHECKPOINT_DIR
+    / "human_chess_policy_5000games.pt"
+)
+
+
+# --------------------------------------------------
+# Device
+# --------------------------------------------------
 
 if torch.xpu.is_available():
     DEVICE = torch.device("xpu")
 else:
     DEVICE = torch.device("cpu")
 
+
+# --------------------------------------------------
+# Training
+# --------------------------------------------------
 
 def train_one_epoch(
     model,
@@ -59,16 +75,22 @@ def train_one_epoch(
         total_loss += loss.item() * batch_size
         total_positions += batch_size
 
-        if batch_number % 50 == 0:
+        if batch_number % 100 == 0:
             print(
-                f"Batch {batch_number:3d} "
+                f"Batch {batch_number:4d} "
                 f"| Loss: {loss.item():.4f}"
             )
 
-    average_loss = total_loss / total_positions
+    average_loss = (
+        total_loss / total_positions
+    )
 
     return average_loss
 
+
+# --------------------------------------------------
+# Evaluation
+# --------------------------------------------------
 
 def evaluate(model, test_dataset):
     model.eval()
@@ -79,10 +101,17 @@ def evaluate(model, test_dataset):
     base_dataset = test_dataset.dataset
 
     with torch.no_grad():
+
         for index in test_dataset.indices:
+
             x, y = base_dataset[index]
 
-            fen = base_dataset.data.iloc[index]["fen"]
+            fen = (
+                base_dataset
+                .data
+                .iloc[index]["fen"]
+            )
+
             board = chess.Board(fen)
 
             x = x.to(DEVICE)
@@ -97,6 +126,7 @@ def evaluate(model, test_dataset):
             )
 
             for move in board.legal_moves:
+
                 move_index = move_to_index(
                     move,
                     board.turn,
@@ -106,7 +136,11 @@ def evaluate(model, test_dataset):
                     scores[move_index]
                 )
 
-            predicted_move = legal_scores.argmax().item()
+            predicted_move = (
+                legal_scores
+                .argmax()
+                .item()
+            )
 
             if predicted_move == y:
                 correct += 1
@@ -116,13 +150,27 @@ def evaluate(model, test_dataset):
     return correct / total
 
 
+# --------------------------------------------------
+# Main
+# --------------------------------------------------
+
 def main():
-    print(f"Device:             {DEVICE}")
 
-    dataset = HumanChessDataset(DATASET_PATH)
+    print("=" * 60)
+    print("HumanChess training")
+    print("=" * 60)
 
-    train_dataset, test_dataset = split_by_game(
-        dataset
+    print(f"Device:       {DEVICE}")
+    print(f"Dataset:      {DATASET_PATH}")
+    print(f"Checkpoint:   {CHECKPOINT_PATH}")
+    print()
+
+    dataset = HumanChessDataset(
+        DATASET_PATH
+    )
+
+    train_dataset, test_dataset = (
+        split_by_game(dataset)
     )
 
     train_loader, _ = make_dataloaders(
@@ -132,19 +180,44 @@ def main():
     )
 
     print(
-        f"Training positions: {len(train_dataset):,}"
+        f"Total positions:    "
+        f"{len(dataset):,}"
     )
+
     print(
-        f"Test positions:     {len(test_dataset):,}"
+        f"Training positions: "
+        f"{len(train_dataset):,}"
     )
+
     print(
-        f"Batch size:         {BATCH_SIZE}"
+        f"Test positions:     "
+        f"{len(test_dataset):,}"
     )
+
+    print(
+        f"Batch size:         "
+        f"{BATCH_SIZE}"
+    )
+
+    print(
+        f"Learning rate:      "
+        f"{LEARNING_RATE}"
+    )
+
+    print(
+        f"Epochs:             "
+        f"{EPOCHS}"
+    )
+
     print()
 
-    model = HumanChessPolicy().to(DEVICE)
+    model = HumanChessPolicy().to(
+        DEVICE
+    )
 
-    loss_fn = torch.nn.CrossEntropyLoss()
+    loss_fn = (
+        torch.nn.CrossEntropyLoss()
+    )
 
     optimizer = torch.optim.Adam(
         model.parameters(),
@@ -158,30 +231,49 @@ def main():
 
     best_accuracy = 0.0
     best_epoch = 0
-    best_state_dict = None
 
+    # Check whether this particular
+    # 5000-game model already exists.
     if CHECKPOINT_PATH.exists():
+
         checkpoint = torch.load(
             CHECKPOINT_PATH,
             map_location="cpu",
+            weights_only=False,
         )
 
         if (
             isinstance(checkpoint, dict)
             and "test_accuracy" in checkpoint
         ):
-            best_accuracy = checkpoint["test_accuracy"]
-            best_epoch = checkpoint["epoch"]
+            best_accuracy = (
+                checkpoint["test_accuracy"]
+            )
+
+            best_epoch = (
+                checkpoint["epoch"]
+            )
 
             print(
-                f"Existing best model: "
+                f"Existing 5000-game best: "
                 f"{best_accuracy * 100:.2f}% "
                 f"(epoch {best_epoch})"
             )
+
             print()
 
-    for epoch in range(1, EPOCHS + 1):
-        print(f"Epoch {epoch}/{EPOCHS}")
+    for epoch in range(
+        1,
+        EPOCHS + 1,
+    ):
+
+        print("=" * 60)
+
+        print(
+            f"Epoch {epoch}/{EPOCHS}"
+        )
+
+        print("=" * 60)
 
         average_loss = train_one_epoch(
             model,
@@ -190,25 +282,15 @@ def main():
             optimizer,
         )
 
+        print()
+        print(
+            "Evaluating test positions..."
+        )
+
         test_accuracy = evaluate(
             model,
             test_dataset,
         )
-
-        if test_accuracy > best_accuracy:
-            best_accuracy = test_accuracy
-            best_epoch = epoch
-
-            best_state_dict = {
-                name: tensor.detach().cpu().clone()
-                for name, tensor
-                in model.state_dict().items()
-            }
-
-            print(
-                f"New best model: "
-                f"{best_accuracy * 100:.2f}%"
-            )
 
         print(
             f"Average training loss: "
@@ -220,27 +302,61 @@ def main():
             f"{test_accuracy * 100:.2f}%"
         )
 
+        # Save immediately whenever
+        # a new best model is found.
+        if test_accuracy > best_accuracy:
+
+            best_accuracy = test_accuracy
+            best_epoch = epoch
+
+            torch.save(
+                {
+                    "model_state_dict":
+                        model.state_dict(),
+
+                    "test_accuracy":
+                        best_accuracy,
+
+                    "epoch":
+                        best_epoch,
+
+                    "dataset":
+                        DATASET_PATH,
+
+                    "training_positions":
+                        len(train_dataset),
+
+                    "test_positions":
+                        len(test_dataset),
+                },
+                CHECKPOINT_PATH,
+            )
+
+            print(
+                f"New best model saved: "
+                f"{best_accuracy * 100:.2f}%"
+            )
+
         print()
 
-    if best_state_dict is not None:
-        torch.save(
-            {
-                "model_state_dict": best_state_dict,
-                "test_accuracy": best_accuracy,
-                "epoch": best_epoch,
-            },
-            CHECKPOINT_PATH,
-        )
+    print("=" * 60)
 
-        print(
-            f"Saved best model from epoch "
-            f"{best_epoch}: "
-            f"{best_accuracy * 100:.2f}%"
-        )
-    else:
-        print(
-            "Existing checkpoint remains the best model."
-        )
+    print(
+        f"Best epoch:    "
+        f"{best_epoch}"
+    )
+
+    print(
+        f"Best accuracy: "
+        f"{best_accuracy * 100:.2f}%"
+    )
+
+    print(
+        f"Saved model:   "
+        f"{CHECKPOINT_PATH}"
+    )
+
+    print("=" * 60)
 
 
 if __name__ == "__main__":

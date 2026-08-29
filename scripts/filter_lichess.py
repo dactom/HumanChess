@@ -3,7 +3,7 @@ import sys
 
 MIN_ELO = 800
 MAX_ELO = 900
-MAX_KEPT = 500
+MAX_KEPT = 5000
 
 def rating_ok(value):
     try:
@@ -81,7 +81,7 @@ def main():
                 sys.stdout.writelines(game_lines)
                 sys.stdout.write("\n")
 
-            if kept >= 500:
+            if kept >= MAX_KEPT:
                 print(
                     f"Reached limit of {kept:,} kept games.",
                     file=sys.stderr,

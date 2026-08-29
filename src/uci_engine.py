@@ -7,8 +7,8 @@ from src.model import HumanChessPolicy
 from src.board_encoding import encode_board
 from src.move_encoding import move_to_index
 
-
-CHECKPOINT_PATH = "checkpoints/human_chess_policy.pt"
+CHECKPOINT_PATH = "checkpoints/human_chess_policy_5000games.pt"
+#CHECKPOINT_PATH = "checkpoints/human_chess_policy.pt" this is for 500 games
 
 # Tactical penalties
 QUEEN_BLUNDER_PENALTY = 4
