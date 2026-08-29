@@ -56,7 +56,7 @@ HumanChess works as a UCI chess engine.
 In Lucas Chess, add a new external engine and point it to:
 
 ```text
-/home/dacian/HumanChess/humanchess
+/home/user/HumanChess/humanchess
 ```
 
 The `humanchess` launcher starts the Python UCI engine from the correct project environment.
