@@ -5,10 +5,20 @@ import torch
 
 from src.model import HumanChessPolicy
 from src.board_encoding import encode_board
-from src.move_encoding import move_to_index 
+from src.move_encoding import move_to_index
 
 
 CHECKPOINT_PATH = "checkpoints/human_chess_policy.pt"
+
+# Tactical penalties
+QUEEN_BLUNDER_PENALTY = 4
+ROOK_BLUNDER_PENALTY = 1.5
+
+# Controls how adventurous HumanChess is.
+#
+# Lower = more likely to choose the strongest move
+# Higher = more variety / more mistakes
+TEMPERATURE = 0.5
 
 
 def load_model():
@@ -28,16 +38,24 @@ def load_model():
 
     return model
 
-def allows_major_piece_capture(board, move):
+
+def major_piece_penalty(board, move):
     """
-    Return True if, after playing `move`, the opponent can
-    immediately capture our queen or rook.
+    Check whether playing `move` allows the opponent
+    to immediately capture our queen or rook.
+
+    Returns:
+        penalty
+        reason
     """
 
     test_board = board.copy()
     our_colour = board.turn
 
     test_board.push(move)
+
+    highest_penalty = 0.0
+    reason = None
 
     for reply in test_board.legal_moves:
 
@@ -54,13 +72,27 @@ def allows_major_piece_capture(board, move):
         if captured_piece.color != our_colour:
             continue
 
-        if captured_piece.piece_type in (
-            chess.QUEEN,
-            chess.ROOK,
-        ):
-            return True
+        if captured_piece.piece_type == chess.QUEEN:
 
-    return False
+            if QUEEN_BLUNDER_PENALTY > highest_penalty:
+                highest_penalty = QUEEN_BLUNDER_PENALTY
+
+                reason = (
+                    f"queen can be captured by "
+                    f"{reply.uci()}"
+                )
+
+        elif captured_piece.piece_type == chess.ROOK:
+
+            if ROOK_BLUNDER_PENALTY > highest_penalty:
+                highest_penalty = ROOK_BLUNDER_PENALTY
+
+                reason = (
+                    f"rook can be captured by "
+                    f"{reply.uci()}"
+                )
+
+    return highest_penalty, reason
 
 
 def choose_move(model, board):
@@ -72,41 +104,181 @@ def choose_move(model, board):
 
     scores = output[0]
 
-    candidate_moves = []
+    candidates = []
 
     for move in board.legal_moves:
+
         move_index = move_to_index(
             move,
             board.turn,
         )
 
-        score = scores[move_index].item()
+        raw_score = scores[move_index].item()
 
-        candidate_moves.append(
-            (score, move)
+        penalty, reason = major_piece_penalty(
+            board,
+            move,
         )
 
-    # Highest neural-network score first
-    candidate_moves.sort(
-        key=lambda item: item[0],
+        adjusted_score = raw_score - penalty
+
+        candidates.append(
+            {
+                "move": move,
+                "raw_score": raw_score,
+                "adjusted_score": adjusted_score,
+                "penalty": penalty,
+                "reason": reason,
+            }
+        )
+
+    # ------------------------------------------------
+    # Original model probabilities
+    # ------------------------------------------------
+
+    raw_scores = torch.tensor(
+        [
+            candidate["raw_score"]
+            for candidate in candidates
+        ]
+    )
+
+    raw_probabilities = torch.softmax(
+        raw_scores,
+        dim=0,
+    )
+
+    # ------------------------------------------------
+    # Adjusted probabilities before temperature
+    # ------------------------------------------------
+
+    adjusted_scores = torch.tensor(
+        [
+            candidate["adjusted_score"]
+            for candidate in candidates
+        ]
+    )
+
+    adjusted_probabilities = torch.softmax(
+        adjusted_scores,
+        dim=0,
+    )
+
+    # ------------------------------------------------
+    # Temperature-controlled probabilities
+    # ------------------------------------------------
+
+    sampling_probabilities = torch.softmax(
+        adjusted_scores / TEMPERATURE,
+        dim=0,
+    )
+
+    # Store probabilities
+    for (
+        candidate,
+        raw_probability,
+        adjusted_probability,
+        sampling_probability,
+    ) in zip(
+        candidates,
+        raw_probabilities,
+        adjusted_probabilities,
+        sampling_probabilities,
+    ):
+
+        candidate["raw_probability"] = (
+            raw_probability.item()
+        )
+
+        candidate["adjusted_probability"] = (
+            adjusted_probability.item()
+        )
+
+        candidate["sampling_probability"] = (
+            sampling_probability.item()
+        )
+
+    # ------------------------------------------------
+    # Sort only for diagnostic display
+    # ------------------------------------------------
+
+    candidates_sorted = sorted(
+        candidates,
+        key=lambda candidate:
+            candidate["sampling_probability"],
         reverse=True,
     )
 
-    # Try moves in the model's preferred order.
-    # Reject moves that immediately expose
-    # our queen or rook to capture.
-    for score, move in candidate_moves:
+    print(
+        "info string --- HumanChess top moves ---"
+    )
 
-        if not allows_major_piece_capture(
-            board,
-            move,
-        ):
-            return move
+    for i, candidate in enumerate(
+        candidates_sorted[:10],
+        start=1,
+    ):
+        move = candidate["move"]
 
-    # If every legal move fails the safety test,
-    # fall back to the model's favourite move.
-    return candidate_moves[0][1]
+        raw_probability = (
+            candidate["raw_probability"] * 100
+        )
 
+        adjusted_probability = (
+            candidate["adjusted_probability"] * 100
+        )
+
+        sampling_probability = (
+            candidate["sampling_probability"] * 100
+        )
+
+        penalty = candidate["penalty"]
+        reason = candidate["reason"]
+
+        if penalty == 0:
+            status = "OK"
+        else:
+            status = (
+                f"PENALTY {penalty:.1f} - "
+                f"{reason}"
+            )
+
+        print(
+            f"info string "
+            f"{i:2d}. {move.uci():5s} "
+            f"raw {raw_probability:6.2f}% "
+            f"adj {adjusted_probability:6.2f}% "
+            f"pick {sampling_probability:6.2f}% "
+            f"{status}"
+        )
+
+    print(
+        f"info string Temperature = "
+        f"{TEMPERATURE}"
+    )
+
+    # ------------------------------------------------
+    # Sample one move
+    # ------------------------------------------------
+
+    selected_index = torch.multinomial(
+        sampling_probabilities,
+        num_samples=1,
+    ).item()
+
+    selected_move = candidates[
+        selected_index
+    ]["move"]
+
+    print(
+        f"info string Selected move: "
+        f"{selected_move.uci()}"
+    )
+
+    print(
+        "info string ----------------------------"
+    )
+
+    return selected_move
 
 
 def set_position(board, command):
@@ -116,7 +288,9 @@ def set_position(board, command):
         board.reset()
 
         if "moves" in parts:
-            moves_index = parts.index("moves") + 1
+            moves_index = (
+                parts.index("moves") + 1
+            )
 
             for move_text in parts[moves_index:]:
                 board.push_uci(move_text)
@@ -125,19 +299,28 @@ def set_position(board, command):
         fen_index = parts.index("fen") + 1
 
         if "moves" in parts:
-            moves_index = parts.index("moves")
+            moves_index = parts.index(
+                "moves"
+            )
 
             fen = " ".join(
-                parts[fen_index:moves_index]
+                parts[
+                    fen_index:moves_index
+                ]
             )
 
             board.set_fen(fen)
 
-            for move_text in parts[moves_index + 1:]:
+            for move_text in parts[
+                moves_index + 1:
+            ]:
                 board.push_uci(move_text)
 
         else:
-            fen = " ".join(parts[fen_index:])
+            fen = " ".join(
+                parts[fen_index:]
+            )
+
             board.set_fen(fen)
 
 
@@ -161,8 +344,6 @@ def main():
 
         elif command == "isready":
 
-            # Load the neural network only after
-            # the UCI handshake has started.
             if model is None:
                 model = load_model()
 
@@ -173,12 +354,13 @@ def main():
             board.reset()
 
         elif command.startswith("position"):
-            set_position(board, command)
+            set_position(
+                board,
+                command,
+            )
 
         elif command.startswith("go"):
 
-            # Safety in case a GUI sends "go"
-            # before "isready".
             if model is None:
                 model = load_model()
 
@@ -186,19 +368,25 @@ def main():
                 print("bestmove 0000")
 
             else:
-                move = choose_move(model, board)
+                move = choose_move(
+                    model,
+                    board,
+                )
 
                 print(
                     f"info depth 1 multipv 1 "
                     f"pv {move.uci()}"
                 )
 
-                print(f"bestmove {move.uci()}")
+                print(
+                    f"bestmove {move.uci()}"
+                )
 
             sys.stdout.flush()
 
         elif command == "quit":
             break
+
 
 if __name__ == "__main__":
     main()
