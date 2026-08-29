@@ -1,8 +1,8 @@
 import csv
 import chess
 
-from board_encoding import encode_board
-from move_encoding import (
+from src.board_encoding import encode_board
+from src.move_encoding import (
     move_to_index,
     normalize_move,
 )
