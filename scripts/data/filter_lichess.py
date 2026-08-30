@@ -1,9 +1,24 @@
+import argparse
 import sys
 
 
 MIN_ELO = 800
 MAX_ELO = 900
-MAX_KEPT = 5000
+
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument(
+        "--max-kept",
+        type=int,
+        default=None,
+        help="Stop after this many matching games. "
+             "Default: process the entire input file.",
+    )
+
+    return parser.parse_args()
+
 
 def rating_ok(value):
     try:
@@ -46,6 +61,8 @@ def keep_headers(headers):
 
 
 def main():
+    args = parse_args()
+
     total = 0
     kept = 0
 
@@ -53,17 +70,22 @@ def main():
     headers = {}
 
     for line in sys.stdin:
+
         if line.startswith("["):
             game_lines.append(line)
 
             if line.startswith("[Event "):
                 headers["Event"] = header_value(line)
+
             elif line.startswith("[WhiteElo "):
                 headers["WhiteElo"] = header_value(line)
+
             elif line.startswith("[BlackElo "):
                 headers["BlackElo"] = header_value(line)
+
             elif line.startswith("[WhiteTitle "):
                 headers["WhiteTitle"] = header_value(line)
+
             elif line.startswith("[BlackTitle "):
                 headers["BlackTitle"] = header_value(line)
 
@@ -73,15 +95,19 @@ def main():
         else:
             game_lines.append(line)
 
-            # Movetext line marks the end of this game record
+            # Movetext line marks the end of the game.
             total += 1
 
             if keep_headers(headers):
                 kept += 1
+
                 sys.stdout.writelines(game_lines)
                 sys.stdout.write("\n")
 
-            if kept >= MAX_KEPT:
+            if (
+                args.max_kept is not None
+                and kept >= args.max_kept
+            ):
                 print(
                     f"Reached limit of {kept:,} kept games.",
                     file=sys.stderr,
@@ -93,12 +119,14 @@ def main():
 
             if total % 100000 == 0:
                 print(
-                    f"Processed {total:,} games, kept {kept:,}",
+                    f"Processed {total:,} games, "
+                    f"kept {kept:,}",
                     file=sys.stderr,
                 )
 
     print(
-        f"Finished. Processed {total:,} games, kept {kept:,}.",
+        f"Finished. Processed {total:,} games, "
+        f"kept {kept:,}.",
         file=sys.stderr,
     )
 

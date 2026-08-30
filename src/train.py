@@ -16,7 +16,7 @@ from src.move_encoding import move_to_index
 # --------------------------------------------------
 
 DATASET_PATH = (
-    "data/processed/rapid_800_900_positions_5000.csv"
+    "data/processed/rapid_800_900_positions_2019-01_all.csv"
 )
 
 BATCH_SIZE = 64
@@ -27,7 +27,7 @@ CHECKPOINT_DIR = Path("checkpoints")
 
 CHECKPOINT_PATH = (
     CHECKPOINT_DIR
-    / "human_chess_policy_5000games.pt"
+    / "human_chess_policy_jan2019_all.pt"
 )
 
 
