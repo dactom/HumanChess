@@ -6,6 +6,8 @@ Current target strength: **800-900 Elo human behaviour**
 
 The model is trained using real Lichess games from players in this rating range.
 
+---
+
 ## Quick Start
 
 Go to the project:
@@ -43,11 +45,19 @@ position startpos moves e2e4
 go
 ```
 
+HumanChess should return a legal move, for example:
+
+```text
+bestmove e7e5
+```
+
 Exit with:
 
 ```text
 quit
 ```
+
+---
 
 ## Using HumanChess in Lucas Chess
 
@@ -61,49 +71,60 @@ In Lucas Chess, add a new external engine and point it to:
 
 The `humanchess` launcher starts the Python UCI engine from the correct project environment.
 
-HumanChess has successfully played full games and tournaments in Lucas Chess.
+HumanChess has successfully played complete games and tournaments in Lucas Chess.
 
-## Current Model
+---
 
-The current main model was trained using:
+## Current Models
 
-```text
-5,000 Lichess Rapid games
-800-900 Elo
-235,358 total positions
-```
+| Training set | Games | Positions | Best test accuracy | Best epoch |
+|---|---:|---:|---:|---:|
+| Initial | 500 | ~22,000 | ~17.9% | 10 |
+| Expanded | 5,000 | 235,358 | 25.80% | 5 |
+| January 2019 full | 19,159 | 908,404 | **30.55%** | 4 |
 
-Train/test split:
-
-```text
-188,520 training positions
-46,838 test positions
-```
-
-Best result:
+The current best model is:
 
 ```text
-Epoch 5
-Test accuracy: 25.80%
+checkpoints/human_chess_policy_jan2019_all.pt
 ```
 
-The older 500-game model reached approximately:
-
-```text
-17.9%
-```
-
-Current checkpoint:
+The previous 5,000-game model is:
 
 ```text
 checkpoints/human_chess_policy_5000games.pt
 ```
 
-Previous model:
+The original 500-game model is:
 
 ```text
 checkpoints/human_chess_policy_500games.pt
 ```
+
+### January 2019 full-dataset split
+
+```text
+Total positions:    908,404
+Training positions: 727,175
+Test positions:     181,229
+```
+
+### January 2019 training result
+
+| Epoch | Test accuracy |
+|---:|---:|
+| 1 | 26.88% |
+| 2 | 29.61% |
+| 3 | 30.20% |
+| 4 | **30.55%** |
+| 5 | 30.23% |
+| 6 | 29.96% |
+
+Training was stopped during epoch 7 because test accuracy had begun to fall while training loss continued decreasing.
+
+The best checkpoint is therefore the epoch 4 model.
+
+---
 
 ## Current Move Selection
 
@@ -111,7 +132,13 @@ The neural network produces scores for legal moves.
 
 HumanChess then applies small tactical penalties and temperature-controlled sampling.
 
-Current settings in `src/uci_engine.py`:
+Current settings in:
+
+```text
+src/uci_engine.py
+```
+
+are:
 
 ```python
 QUEEN_BLUNDER_PENALTY = 4.0
@@ -125,12 +152,36 @@ HumanChess is supposed to make mistakes because real 800-900 Elo players make mi
 
 The tactical layer is intended to reduce extreme mistakes without turning HumanChess into a conventional strong chess engine.
 
+The basic move-selection pipeline is:
+
+```text
+800-900 Elo training games
+        |
+        v
+neural-network move scores
+        |
+        v
+legal-move filtering
+        |
+        v
+soft tactical penalties
+        |
+        v
+temperature-controlled sampling
+        |
+        v
+HumanChess move
+```
+
+---
+
 ## Project Structure
 
 ```text
 HumanChess/
 ├── src/
 │   ├── baselines/
+│   │   ├── __init__.py
 │   │   ├── random_policy.py
 │   │   └── move_frequency_policy.py
 │   ├── board_encoding.py
@@ -145,6 +196,7 @@ HumanChess/
 │   ├── data/
 │   │   ├── extract_positions.py
 │   │   ├── filter_5000_games.sh
+│   │   ├── filter_january_2019_all.sh
 │   │   └── filter_lichess.py
 │   ├── inspect/
 │   │   ├── inspect_dataset.py
@@ -154,16 +206,37 @@ HumanChess/
 │       └── evaluate_baseline.py
 │
 ├── benchmarks/
+│   ├── 500games_vs_monkey.pgn
+│   ├── 5000games_vs_monkey.pgn
+│   ├── 5000games_vs_horse.pgn
+│   ├── 5000games_vs_elephant.pgn
+│   ├── Jan2019_vs_monkey.pgn
+│   └── README.md
+│
 ├── data/
+│   ├── raw/
+│   ├── filtered/
+│   └── processed/
+│
 ├── checkpoints/
 ├── humanchess
 ├── requirements.txt
 ├── requirements-intel.txt
 ├── requirements-nvidia.txt
+├── .gitignore
 └── README.md
 ```
 
-The `data/`, `checkpoints/`, `models/`, and `logs/` directories are excluded from Git because they may contain large generated files.
+The following directories are excluded from Git because they may contain large generated files:
+
+```text
+/data/
+/checkpoints/
+/models/
+/logs/
+```
+
+---
 
 ## Python Environment
 
@@ -185,21 +258,23 @@ General dependencies are recorded in:
 requirements.txt
 ```
 
-Intel Arc/XPU dependencies are recorded in:
+Intel Arc / XPU dependencies are recorded in:
 
 ```text
 requirements-intel.txt
 ```
 
-NVIDIA/CUDA dependencies are recorded in:
+NVIDIA / CUDA dependencies are recorded in:
 
 ```text
 requirements-nvidia.txt
 ```
 
+---
+
 ## Training Data
 
-The current dataset comes from the January 2019 Lichess rated-game database.
+The current dataset comes from the January 2019 Lichess standard rated-game database.
 
 Filtering criteria:
 
@@ -208,13 +283,15 @@ Filtering criteria:
 - Black Elo between 800 and 900
 - BOT accounts excluded
 
-The original compressed Lichess file is expected at:
+The original compressed database file is expected at:
 
 ```text
 data/raw/lichess/lichess_db_standard_rated_2019-01.pgn.zst
 ```
 
 The `data/` directory is intentionally excluded from Git.
+
+---
 
 ## Generate the 5,000-Game Dataset
 
@@ -237,9 +314,35 @@ Expected result:
 approximately 8 MB PGN
 ```
 
-## Extract Training Positions
+---
+
+## Generate the Full January 2019 Dataset
 
 From the project root:
+
+```bash
+./scripts/data/filter_january_2019_all.sh
+```
+
+This processes the entire January 2019 Lichess database without a 5,000-game limit.
+
+Current result:
+
+```text
+19,159 matching games
+```
+
+The filtered PGN is:
+
+```text
+data/filtered/rapid_800_900_2019-01_all.pgn
+```
+
+---
+
+## Extract Training Positions
+
+### 5,000-game dataset
 
 ```bash
 python3 scripts/data/extract_positions.py   data/filtered/rapid_800_900_5000.pgn   data/processed/rapid_800_900_positions_5000.csv
@@ -251,6 +354,21 @@ Current result:
 Processed 5,000 games
 Extracted 235,358 positions
 ```
+
+### Full January 2019 dataset
+
+```bash
+python3 scripts/data/extract_positions.py   data/filtered/rapid_800_900_2019-01_all.pgn   data/processed/rapid_800_900_positions_2019-01_all.csv
+```
+
+Current result:
+
+```text
+Processed 19,159 games
+Extracted 908,404 positions
+```
+
+---
 
 ## Train the Model
 
@@ -266,7 +384,7 @@ Start training:
 python3 -m src.train
 ```
 
-Current configuration:
+Current training configuration:
 
 ```text
 Batch size:     64
@@ -276,21 +394,26 @@ Loss:           CrossEntropyLoss
 Maximum epochs: 15
 ```
 
-Current 5,000-game run:
+The dataset and checkpoint paths are configured near the top of:
 
-| Epoch | Test accuracy |
-|------:|--------------:|
-| 1 | 21.20% |
-| 2 | 24.47% |
-| 3 | 25.39% |
-| 4 | 25.68% |
-| 5 | **25.80%** |
-| 6 | 25.66% |
-| 7 | 25.21% |
+```text
+src/train.py
+```
 
-Training was stopped after the model began to overfit.
+For the January 2019 full dataset, use:
 
-The best checkpoint was therefore epoch 5.
+```python
+DATASET_PATH = (
+    "data/processed/rapid_800_900_positions_2019-01_all.csv"
+)
+
+CHECKPOINT_PATH = (
+    CHECKPOINT_DIR
+    / "human_chess_policy_jan2019_all.pt"
+)
+```
+
+---
 
 ## Inspection Tools
 
@@ -312,6 +435,8 @@ Inspect extracted positions:
 python3 -m scripts.inspect.inspect_positions
 ```
 
+---
+
 ## Baseline Evaluation
 
 Run:
@@ -326,8 +451,11 @@ Previous baseline results:
 Random legal move:       ~7.13%
 Most frequent move:      ~13.46%
 500-game neural model:   ~17.9%
-5000-game neural model:  25.80%
+5,000-game neural model: 25.80%
+January-all model:       30.55%
 ```
+
+---
 
 ## Lucas Chess Benchmarks
 
@@ -339,35 +467,71 @@ benchmarks/
 
 Current results:
 
-| HumanChess | Opponent | Wins | Draws | Losses | Score |
+| HumanChess model | Opponent | Wins | Draws | Losses | Score |
 |---|---|---:|---:|---:|---:|
-| 500-game model | Irina Monkey | 5 | 15 | 0 | 62.5% |
-| 5,000-game model | Irina Monkey | 6 | 14 | 0 | 65.0% |
-| 5,000-game model | Irina Horse | 0 | 4 | 16 | 10.0% |
-| 5,000-game model | Irina Elephant | 0 | 2 | 18 | 5.0% |
+| 500 games | Irina Monkey | 5 | 15 | 0 | 62.5% |
+| 5,000 games | Irina Monkey | 6 | 14 | 0 | 65.0% |
+| January-all | Irina Monkey | 5 | 15 | 0 | 62.5% |
+| 5,000 games | Irina Horse | 0 | 4 | 16 | 10.0% |
+| 5,000 games | Irina Elephant | 0 | 2 | 18 | 5.0% |
 
-This currently places HumanChess roughly around the Monkey level while Horse and Elephant remain substantially stronger.
+The January-all Monkey tournament showed that the much higher move-prediction accuracy did not yet produce a clear improvement in the 20-game Monkey result.
 
-## Development Direction
+This is an important result because it suggests that prediction accuracy and practical playing strength are not the same thing.
 
-The next question is whether HumanChess should improve mainly through:
+---
 
-1. more training games,
-2. a better neural-network architecture,
-3. improved move selection,
-4. limited tactical awareness.
+## Benchmark Interpretation
 
-Increasing the dataset from 500 to 5,000 games improved test accuracy from approximately:
+The current strength picture is approximately:
 
 ```text
-17.9% -> 25.8%
+Irina Monkey
+    |
+    |  HumanChess is competitive here
+    |
+HumanChess
+    |
+    |  Horse is clearly stronger
+    |
+Irina Horse
+    |
+    |  Elephant is stronger again
+    |
+Irina Elephant
 ```
 
-so additional training data remains a promising direction.
+The current HumanChess model can compete with Monkey but still performs poorly against Horse and Elephant.
 
-Benchmark games also show tactical problems such as missed mate threats and hanging pieces.
+---
 
-The next development stage will analyse these failures before deciding whether to scale the training set or add tactical knowledge.
+## Current Development Direction
+
+Increasing the amount of training data produced a large improvement in move-prediction accuracy:
+
+```text
+500 games        -> ~17.9%
+5,000 games      -> 25.80%
+19,159 games     -> 30.55%
+```
+
+However, the January-all model did not clearly improve the 20-game Irina Monkey tournament result compared with the 5,000-game model.
+
+This suggests that prediction accuracy is still improving with more training data, but actual playing strength may now be limited by other factors such as:
+
+1. tactical blindness,
+2. move-selection behaviour,
+3. neural-network architecture,
+4. limited ability to understand multi-move consequences.
+
+The next stage should analyse benchmark games before deciding whether to:
+
+- add more training data,
+- modify the neural-network architecture,
+- tune temperature and tactical penalties,
+- or add limited tactical awareness.
+
+---
 
 ## Design Goal
 
@@ -378,3 +542,7 @@ The objective is:
 > Build a chess opponent that chooses moves like a real human player at a selected Elo level.
 
 A successful HumanChess model should make good moves, ordinary moves, occasional poor moves, and realistic tactical mistakes at approximately the frequency expected from players in its target rating range.
+
+The aim is not to eliminate mistakes.
+
+The aim is to make the mistakes look human.
