@@ -1,12 +1,14 @@
 import torch
 import chess
+
 from pathlib import Path
 
 from src.dataset import (
-    HumanChessDataset,
+    PreEncodedHumanChessDataset,
     split_by_game,
     make_dataloaders,
 )
+
 from src.model import HumanChessPolicy
 from src.move_encoding import move_to_index
 
@@ -16,18 +18,26 @@ from src.move_encoding import move_to_index
 # --------------------------------------------------
 
 DATASET_PATH = (
-    "data/processed/rapid_800_900_positions_2019-01_all.csv"
+    "data/processed/"
+    "rapid_800_900_positions_2019-01_all.csv"
 )
 
-BATCH_SIZE = 64
+PREENCODED_PATH = (
+    "data/processed/"
+    "rapid_800_900_positions_2019-01_all.pt"
+)
+
+BATCH_SIZE = 256
 LEARNING_RATE = 0.001
 EPOCHS = 15
 
-CHECKPOINT_DIR = Path("checkpoints")
+CHECKPOINT_DIR = Path(
+    "checkpoints"
+)
 
 CHECKPOINT_PATH = (
     CHECKPOINT_DIR
-    / "human_chess_policy_jan2019_all.pt"
+    / "human_chess_policy_2080ti_test.pt"
 )
 
 
@@ -35,10 +45,26 @@ CHECKPOINT_PATH = (
 # Device
 # --------------------------------------------------
 
-if torch.xpu.is_available():
-    DEVICE = torch.device("xpu")
+if torch.cuda.is_available():
+
+    DEVICE = torch.device(
+        "cuda"
+    )
+
+elif (
+    hasattr(torch, "xpu")
+    and torch.xpu.is_available()
+):
+
+    DEVICE = torch.device(
+        "xpu"
+    )
+
 else:
-    DEVICE = torch.device("cpu")
+
+    DEVICE = torch.device(
+        "cpu"
+    )
 
 
 # --------------------------------------------------
@@ -51,6 +77,7 @@ def train_one_epoch(
     loss_fn,
     optimizer,
 ):
+
     model.train()
 
     total_loss = 0.0
@@ -60,29 +87,58 @@ def train_one_epoch(
         train_loader,
         start=1,
     ):
-        x = x.to(DEVICE)
-        y = y.to(DEVICE)
 
-        scores = model(x)
-        loss = loss_fn(scores, y)
+        # Stored as uint8 to save memory.
+        # Convert entire batch to float
+        # only when it reaches the device.
+        x = (
+            x
+            .to(DEVICE)
+            .float()
+        )
+
+        y = y.to(
+            DEVICE
+        )
+
+        scores = model(
+            x
+        )
+
+        loss = loss_fn(
+            scores,
+            y,
+        )
 
         optimizer.zero_grad()
+
         loss.backward()
+
         optimizer.step()
 
         batch_size = x.size(0)
 
-        total_loss += loss.item() * batch_size
-        total_positions += batch_size
+        total_loss += (
+            loss.item()
+            * batch_size
+        )
+
+        total_positions += (
+            batch_size
+        )
 
         if batch_number % 100 == 0:
+
             print(
-                f"Batch {batch_number:4d} "
-                f"| Loss: {loss.item():.4f}"
+                f"Batch "
+                f"{batch_number:4d} "
+                f"| Loss: "
+                f"{loss.item():.4f}"
             )
 
     average_loss = (
-        total_loss / total_positions
+        total_loss
+        / total_positions
     )
 
     return average_loss
@@ -92,62 +148,129 @@ def train_one_epoch(
 # Evaluation
 # --------------------------------------------------
 
-def evaluate(model, test_dataset):
+def evaluate(
+    model,
+    test_dataset,
+):
+
     model.eval()
 
     correct = 0
     total = 0
 
-    base_dataset = test_dataset.dataset
+    base_dataset = (
+        test_dataset.dataset
+    )
+
+    indices = (
+        test_dataset.indices
+    )
+
+    batch_size = (
+        BATCH_SIZE
+    )
 
     with torch.no_grad():
 
-        for index in test_dataset.indices:
+        for start in range(
+            0,
+            len(indices),
+            batch_size,
+        ):
 
-            x, y = base_dataset[index]
+            batch_indices = indices[
+                start:
+                start + batch_size
+            ]
 
-            fen = (
-                base_dataset
-                .data
-                .iloc[index]["fen"]
-            )
+            xs = []
+            ys = []
+            boards = []
 
-            board = chess.Board(fen)
+            for index in batch_indices:
 
-            x = x.to(DEVICE)
-
-            scores = model(
-                x.unsqueeze(0)
-            ).squeeze(0)
-
-            legal_scores = torch.full_like(
-                scores,
-                float("-inf"),
-            )
-
-            for move in board.legal_moves:
-
-                move_index = move_to_index(
-                    move,
-                    board.turn,
+                x, y = (
+                    base_dataset[index]
                 )
 
-                legal_scores[move_index] = (
-                    scores[move_index]
+                fen = (
+                    base_dataset
+                    .data
+                    .iloc[index]["fen"]
                 )
 
-            predicted_move = (
-                legal_scores
-                .argmax()
-                .item()
+                board = chess.Board(
+                    fen
+                )
+
+                xs.append(
+                    x
+                )
+
+                ys.append(
+                    y
+                )
+
+                boards.append(
+                    board
+                )
+
+            x_batch = (
+                torch
+                .stack(xs)
+                .to(DEVICE)
+                .float()
             )
 
-            if predicted_move == y:
-                correct += 1
+            scores_batch = model(
+                x_batch
+            )
 
-            total += 1
+            for scores, y, board in zip(
+                scores_batch,
+                ys,
+                boards,
+            ):
 
-    return correct / total
+                legal_scores = (
+                    torch.full_like(
+                        scores,
+                        float("-inf"),
+                    )
+                )
+
+                for move in board.legal_moves:
+
+                    move_index = (
+                        move_to_index(
+                            move,
+                            board.turn,
+                        )
+                    )
+
+                    legal_scores[
+                        move_index
+                    ] = scores[
+                        move_index
+                    ]
+
+                predicted_move = (
+                    legal_scores
+                    .argmax()
+                    .item()
+                )
+
+                if (
+                    predicted_move
+                    == y.item()
+                ):
+                    correct += 1
+
+                total += 1
+
+    return (
+        correct / total
+    )
 
 
 # --------------------------------------------------
@@ -160,23 +283,42 @@ def main():
     print("HumanChess training")
     print("=" * 60)
 
-    print(f"Device:       {DEVICE}")
-    print(f"Dataset:      {DATASET_PATH}")
-    print(f"Checkpoint:   {CHECKPOINT_PATH}")
+    print(
+        f"Device:       "
+        f"{DEVICE}"
+    )
+
+    print(
+        f"Dataset:      "
+        f"{PREENCODED_PATH}"
+    )
+
+    print(
+        f"Checkpoint:   "
+        f"{CHECKPOINT_PATH}"
+    )
+
     print()
 
-    dataset = HumanChessDataset(
-        DATASET_PATH
+    dataset = (
+        PreEncodedHumanChessDataset(
+            PREENCODED_PATH,
+            DATASET_PATH,
+        )
     )
 
     train_dataset, test_dataset = (
-        split_by_game(dataset)
+        split_by_game(
+            dataset
+        )
     )
 
-    train_loader, _ = make_dataloaders(
-        train_dataset,
-        test_dataset,
-        batch_size=BATCH_SIZE,
+    train_loader, _ = (
+        make_dataloaders(
+            train_dataset,
+            test_dataset,
+            batch_size=BATCH_SIZE,
+        )
     )
 
     print(
@@ -211,8 +353,9 @@ def main():
 
     print()
 
-    model = HumanChessPolicy().to(
-        DEVICE
+    model = (
+        HumanChessPolicy()
+        .to(DEVICE)
     )
 
     loss_fn = (
@@ -232,8 +375,6 @@ def main():
     best_accuracy = 0.0
     best_epoch = 0
 
-    # Check whether this particular
-    # 5000-game model already exists.
     if CHECKPOINT_PATH.exists():
 
         checkpoint = torch.load(
@@ -243,19 +384,28 @@ def main():
         )
 
         if (
-            isinstance(checkpoint, dict)
-            and "test_accuracy" in checkpoint
+            isinstance(
+                checkpoint,
+                dict,
+            )
+            and "test_accuracy"
+            in checkpoint
         ):
+
             best_accuracy = (
-                checkpoint["test_accuracy"]
+                checkpoint[
+                    "test_accuracy"
+                ]
             )
 
             best_epoch = (
-                checkpoint["epoch"]
+                checkpoint[
+                    "epoch"
+                ]
             )
 
             print(
-                f"Existing 5000-game best: "
+                f"Existing best model: "
                 f"{best_accuracy * 100:.2f}% "
                 f"(epoch {best_epoch})"
             )
@@ -270,19 +420,23 @@ def main():
         print("=" * 60)
 
         print(
-            f"Epoch {epoch}/{EPOCHS}"
+            f"Epoch "
+            f"{epoch}/{EPOCHS}"
         )
 
         print("=" * 60)
 
-        average_loss = train_one_epoch(
-            model,
-            train_loader,
-            loss_fn,
-            optimizer,
+        average_loss = (
+            train_one_epoch(
+                model,
+                train_loader,
+                loss_fn,
+                optimizer,
+            )
         )
 
         print()
+
         print(
             "Evaluating test positions..."
         )
@@ -302,12 +456,18 @@ def main():
             f"{test_accuracy * 100:.2f}%"
         )
 
-        # Save immediately whenever
-        # a new best model is found.
-        if test_accuracy > best_accuracy:
+        if (
+            test_accuracy
+            > best_accuracy
+        ):
 
-            best_accuracy = test_accuracy
-            best_epoch = epoch
+            best_accuracy = (
+                test_accuracy
+            )
+
+            best_epoch = (
+                epoch
+            )
 
             torch.save(
                 {
@@ -324,10 +484,14 @@ def main():
                         DATASET_PATH,
 
                     "training_positions":
-                        len(train_dataset),
+                        len(
+                            train_dataset
+                        ),
 
                     "test_positions":
-                        len(test_dataset),
+                        len(
+                            test_dataset
+                        ),
                 },
                 CHECKPOINT_PATH,
             )
