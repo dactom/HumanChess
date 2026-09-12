@@ -7,7 +7,11 @@ __pycache__/
 
 /data/
 checkpoints/
-models/
+/models/
 logs/
 
 .DS_Store
+
+build/
+dist/
+*.spec

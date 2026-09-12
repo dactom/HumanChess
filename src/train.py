@@ -1,7 +1,8 @@
-import torch
-import chess
-
+import argparse
 from pathlib import Path
+
+import chess
+import torch
 
 from src.dataset import (
     PreEncodedHumanChessDataset,
@@ -9,7 +10,9 @@ from src.dataset import (
     make_dataloaders,
 )
 
-from src.model import HumanChessPolicy
+from src.models.policy_v1 import HumanChessPolicy
+from src.models.policy_resnet import HumanChessResNetPolicy
+
 from src.move_encoding import move_to_index
 
 
@@ -29,16 +32,7 @@ PREENCODED_PATH = (
 
 BATCH_SIZE = 256
 LEARNING_RATE = 0.001
-EPOCHS = 15
-
-CHECKPOINT_DIR = Path(
-    "checkpoints"
-)
-
-CHECKPOINT_PATH = (
-    CHECKPOINT_DIR
-    / "human_chess_policy_2080ti_test.pt"
-)
+DEFAULT_EPOCHS = 15
 
 
 # --------------------------------------------------
@@ -68,6 +62,46 @@ else:
 
 
 # --------------------------------------------------
+# Model selection
+# --------------------------------------------------
+
+def create_model(model_name):
+
+    if model_name == "v1":
+        return HumanChessPolicy()
+
+    if model_name == "resnet":
+        return HumanChessResNetPolicy()
+
+    raise ValueError(
+        f"Unknown model: {model_name}"
+    )
+
+
+def checkpoint_path_for_model(model_name):
+
+    if model_name == "v1":
+
+        return (
+            Path("checkpoints")
+            / "human_chess_policy_2080ti_test.pt"
+        )
+
+    if model_name == "resnet":
+
+        return (
+            Path("checkpoints")
+            / "v2"
+            / "residual"
+            / "best.pt"
+        )
+
+    raise ValueError(
+        f"Unknown model: {model_name}"
+    )
+
+
+# --------------------------------------------------
 # Training
 # --------------------------------------------------
 
@@ -88,9 +122,6 @@ def train_one_epoch(
         start=1,
     ):
 
-        # Stored as uint8 to save memory.
-        # Convert entire batch to float
-        # only when it reaches the device.
         x = (
             x
             .to(DEVICE)
@@ -155,7 +186,10 @@ def evaluate(
 
     model.eval()
 
-    correct = 0
+    correct_top1 = 0
+    correct_top3 = 0
+    correct_top5 = 0
+
     total = 0
 
     base_dataset = (
@@ -239,6 +273,8 @@ def evaluate(
                     )
                 )
 
+                legal_move_count = 0
+
                 for move in board.legal_moves:
 
                     move_index = (
@@ -254,23 +290,156 @@ def evaluate(
                         move_index
                     ]
 
+                    legal_move_count += 1
+
+                target = y.item()
+
+                # Top-1
                 predicted_move = (
                     legal_scores
                     .argmax()
                     .item()
                 )
 
-                if (
-                    predicted_move
-                    == y.item()
-                ):
-                    correct += 1
+                if predicted_move == target:
+                    correct_top1 += 1
+
+                # Top-3
+                top3_count = min(
+                    3,
+                    legal_move_count,
+                )
+
+                top3_moves = (
+                    torch.topk(
+                        legal_scores,
+                        k=top3_count,
+                    )
+                    .indices
+                    .tolist()
+                )
+
+                if target in top3_moves:
+                    correct_top3 += 1
+
+                # Top-5
+                top5_count = min(
+                    5,
+                    legal_move_count,
+                )
+
+                top5_moves = (
+                    torch.topk(
+                        legal_scores,
+                        k=top5_count,
+                    )
+                    .indices
+                    .tolist()
+                )
+
+                if target in top5_moves:
+                    correct_top5 += 1
 
                 total += 1
 
     return (
-        correct / total
+        correct_top1 / total,
+        correct_top3 / total,
+        correct_top5 / total,
     )
+
+
+# --------------------------------------------------
+# Checkpoint loading
+# --------------------------------------------------
+
+def load_checkpoint(
+    model,
+    checkpoint_path,
+):
+
+    if not checkpoint_path.exists():
+
+        raise FileNotFoundError(
+            f"Checkpoint not found: "
+            f"{checkpoint_path}"
+        )
+
+    checkpoint = torch.load(
+        checkpoint_path,
+        map_location="cpu",
+        weights_only=False,
+    )
+
+    if (
+        not isinstance(
+            checkpoint,
+            dict,
+        )
+        or "model_state_dict"
+        not in checkpoint
+    ):
+
+        raise ValueError(
+            f"Invalid checkpoint: "
+            f"{checkpoint_path}"
+        )
+
+    model.load_state_dict(
+        checkpoint[
+            "model_state_dict"
+        ]
+    )
+
+    return checkpoint
+
+
+# --------------------------------------------------
+# Command line
+# --------------------------------------------------
+
+def parse_args():
+
+    parser = argparse.ArgumentParser(
+        description=(
+            "Train or evaluate a "
+            "HumanChess policy model."
+        )
+    )
+
+    parser.add_argument(
+        "--model",
+        choices=[
+            "v1",
+            "resnet",
+        ],
+        default="v1",
+        help=(
+            "Model architecture "
+            "(default: v1)"
+        ),
+    )
+
+    parser.add_argument(
+        "--epochs",
+        type=int,
+        default=DEFAULT_EPOCHS,
+        help=(
+            "Number of training epochs "
+            f"(default: {DEFAULT_EPOCHS})"
+        ),
+    )
+
+    parser.add_argument(
+        "--evaluate-only",
+        action="store_true",
+        help=(
+            "Load the saved checkpoint "
+            "and evaluate without training."
+        ),
+    )
+
+    return parser.parse_args()
 
 
 # --------------------------------------------------
@@ -279,9 +448,34 @@ def evaluate(
 
 def main():
 
+    args = parse_args()
+
+    model_name = (
+        args.model
+    )
+
+    epochs = (
+        args.epochs
+    )
+
+    checkpoint_path = (
+        checkpoint_path_for_model(
+            model_name
+        )
+    )
+
+    checkpoint_dir = (
+        checkpoint_path.parent
+    )
+
     print("=" * 60)
     print("HumanChess training")
     print("=" * 60)
+
+    print(
+        f"Model:        "
+        f"{model_name}"
+    )
 
     print(
         f"Device:       "
@@ -295,7 +489,7 @@ def main():
 
     print(
         f"Checkpoint:   "
-        f"{CHECKPOINT_PATH}"
+        f"{checkpoint_path}"
     )
 
     print()
@@ -346,17 +540,98 @@ def main():
         f"{LEARNING_RATE}"
     )
 
-    print(
-        f"Epochs:             "
-        f"{EPOCHS}"
-    )
+    if not args.evaluate_only:
+
+        print(
+            f"Epochs:             "
+            f"{epochs}"
+        )
 
     print()
 
     model = (
-        HumanChessPolicy()
+        create_model(
+            model_name
+        )
         .to(DEVICE)
     )
+
+    parameter_count = sum(
+        p.numel()
+        for p in model.parameters()
+        if p.requires_grad
+    )
+
+    print(
+        f"Trainable parameters: "
+        f"{parameter_count:,}"
+    )
+
+    print()
+
+    # --------------------------------------------------
+    # Evaluation-only mode
+    # --------------------------------------------------
+
+    if args.evaluate_only:
+
+        print(
+            "Loading saved checkpoint..."
+        )
+
+        checkpoint = load_checkpoint(
+            model,
+            checkpoint_path,
+        )
+
+        print(
+            f"Checkpoint epoch: "
+            f"{checkpoint.get('epoch', 'unknown')}"
+        )
+
+        print()
+
+        print(
+            "Evaluating test positions..."
+        )
+
+        (
+            top1_accuracy,
+            top3_accuracy,
+            top5_accuracy,
+        ) = evaluate(
+            model,
+            test_dataset,
+        )
+
+        print()
+
+        print("=" * 60)
+        print("Evaluation results")
+        print("=" * 60)
+
+        print(
+            f"Top-1 accuracy: "
+            f"{top1_accuracy * 100:.2f}%"
+        )
+
+        print(
+            f"Top-3 accuracy: "
+            f"{top3_accuracy * 100:.2f}%"
+        )
+
+        print(
+            f"Top-5 accuracy: "
+            f"{top5_accuracy * 100:.2f}%"
+        )
+
+        print("=" * 60)
+
+        return
+
+    # --------------------------------------------------
+    # Training mode
+    # --------------------------------------------------
 
     loss_fn = (
         torch.nn.CrossEntropyLoss()
@@ -367,7 +642,7 @@ def main():
         lr=LEARNING_RATE,
     )
 
-    CHECKPOINT_DIR.mkdir(
+    checkpoint_dir.mkdir(
         parents=True,
         exist_ok=True,
     )
@@ -375,10 +650,10 @@ def main():
     best_accuracy = 0.0
     best_epoch = 0
 
-    if CHECKPOINT_PATH.exists():
+    if checkpoint_path.exists():
 
         checkpoint = torch.load(
-            CHECKPOINT_PATH,
+            checkpoint_path,
             map_location="cpu",
             weights_only=False,
         )
@@ -414,14 +689,14 @@ def main():
 
     for epoch in range(
         1,
-        EPOCHS + 1,
+        epochs + 1,
     ):
 
         print("=" * 60)
 
         print(
             f"Epoch "
-            f"{epoch}/{EPOCHS}"
+            f"{epoch}/{epochs}"
         )
 
         print("=" * 60)
@@ -441,7 +716,11 @@ def main():
             "Evaluating test positions..."
         )
 
-        test_accuracy = evaluate(
+        (
+            top1_accuracy,
+            top3_accuracy,
+            top5_accuracy,
+        ) = evaluate(
             model,
             test_dataset,
         )
@@ -452,17 +731,27 @@ def main():
         )
 
         print(
-            f"Test accuracy: "
-            f"{test_accuracy * 100:.2f}%"
+            f"Top-1 accuracy: "
+            f"{top1_accuracy * 100:.2f}%"
+        )
+
+        print(
+            f"Top-3 accuracy: "
+            f"{top3_accuracy * 100:.2f}%"
+        )
+
+        print(
+            f"Top-5 accuracy: "
+            f"{top5_accuracy * 100:.2f}%"
         )
 
         if (
-            test_accuracy
+            top1_accuracy
             > best_accuracy
         ):
 
             best_accuracy = (
-                test_accuracy
+                top1_accuracy
             )
 
             best_epoch = (
@@ -471,11 +760,23 @@ def main():
 
             torch.save(
                 {
+                    "model_name":
+                        model_name,
+
                     "model_state_dict":
                         model.state_dict(),
 
                     "test_accuracy":
-                        best_accuracy,
+                        top1_accuracy,
+
+                    "top1_accuracy":
+                        top1_accuracy,
+
+                    "top3_accuracy":
+                        top3_accuracy,
+
+                    "top5_accuracy":
+                        top5_accuracy,
 
                     "epoch":
                         best_epoch,
@@ -493,7 +794,7 @@ def main():
                             test_dataset
                         ),
                 },
-                CHECKPOINT_PATH,
+                checkpoint_path,
             )
 
             print(
@@ -511,13 +812,13 @@ def main():
     )
 
     print(
-        f"Best accuracy: "
+        f"Best Top-1:    "
         f"{best_accuracy * 100:.2f}%"
     )
 
     print(
         f"Saved model:   "
-        f"{CHECKPOINT_PATH}"
+        f"{checkpoint_path}"
     )
 
     print("=" * 60)
