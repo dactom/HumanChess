@@ -8,12 +8,12 @@ from src.move_encoding import move_to_index
 
 INPUT_CSV = (
     "data/processed/"
-    "rapid_800_900_positions_2019-01_all.csv"
+    "rapid_800_900_positions_2019_2020.csv"
 )
 
 OUTPUT_PT = (
     "data/processed/"
-    "rapid_800_900_positions_2019-01_all.pt"
+    "rapid_800_900_positions_2019_2020.pt"
 )
 
 

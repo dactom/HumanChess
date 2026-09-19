@@ -1,4 +1,4 @@
-import argparse
+﻿import argparse
 from pathlib import Path
 
 import chess
@@ -22,12 +22,12 @@ from src.move_encoding import move_to_index
 
 DATASET_PATH = (
     "data/processed/"
-    "rapid_800_900_positions_2019-01_all.csv"
+    "rapid_800_900_positions_2019_2020.csv"
 )
 
 PREENCODED_PATH = (
     "data/processed/"
-    "rapid_800_900_positions_2019-01_all.pt"
+    "rapid_800_900_positions_2019_2020.pt"
 )
 
 BATCH_SIZE = 256
@@ -91,7 +91,7 @@ def checkpoint_path_for_model(model_name):
 
         return (
             Path("checkpoints")
-            / "v2"
+            / "v3"
             / "residual"
             / "best.pt"
         )
@@ -826,3 +826,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
